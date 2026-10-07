@@ -166,6 +166,84 @@ def write_svg(path: Path, series: dict[str, list[float]], xlabel: str,
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_statistics_svg(path: Path, values: dict[str, dict[str, float]]) -> None:
+    width, height = 1000, 600
+    left, top, right, bottom = 90, 45, 35, 80
+    plot_width, plot_height = width - left - right, height - top - bottom
+    maximum = max(statistic for method in values.values() for statistic in method.values())
+    colors = {"min": "#2ca02c", "mean": "#1f77b4", "median": "#ff7f0e", "max": "#d62728"}
+    lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="black"/>',
+        f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="black"/>',
+        f'<text x="{width/2}" y="{height-22}" text-anchor="middle">Метод</text>',
+        f'<text transform="translate(20,{height/2}) rotate(-90)" text-anchor="middle">Лучшее значение f(x)</text>',
+    ]
+    methods = list(values)
+    group_width = plot_width / len(methods)
+    bar_width = group_width / (len(colors) + 1)
+    for method_index, method in enumerate(methods):
+        group_start = left + method_index * group_width
+        for statistic_index, (statistic, color) in enumerate(colors.items()):
+            value = values[method][statistic]
+            bar_height = value / maximum * plot_height if maximum else 0
+            x = group_start + (statistic_index + 0.5) * bar_width
+            y = height - bottom - bar_height
+            lines.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width*.8:.1f}" '
+                f'height="{bar_height:.1f}" fill="{color}"/>'
+            )
+            lines.append(
+                f'<text x="{x + bar_width*.32:.1f}" y="{y-5:.1f}" '
+                f'font-size="11" text-anchor="middle">{value:.3f}</text>'
+            )
+        lines.append(
+            f'<text x="{group_start + group_width/2:.1f}" y="{height-bottom+22}" '
+            f'text-anchor="middle">{method}</text>'
+        )
+    for index, (statistic, color) in enumerate(colors.items()):
+        x = width - right - 190 + index * 45
+        lines.extend([
+            f'<rect x="{x}" y="18" width="12" height="12" fill="{color}"/>',
+            f'<text x="{x+16}" y="28" font-size="12">{statistic}</text>',
+        ])
+    lines.append("</svg>")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_flowchart_svg(path: Path) -> None:
+    lines = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="980">',
+        '<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#333"/></marker></defs>',
+        '<rect width="100%" height="100%" fill="white"/>',
+    ]
+    boxes = [
+        (370, 25, 260, 55, "Начало;задать seed и параметры"),
+        (320, 125, 360, 65, "Инициализировать популяцию;в области [-10, 10]"),
+        (320, 235, 360, 65, "Вычислить f(x);сохранить лучшую особь"),
+        (320, 345, 360, 65, "Критерий остановки;достигнут лимит поколений?"),
+        (320, 500, 360, 65, "Турнирная селекция;родителей"),
+        (320, 610, 360, 65, "Арифметический кроссовер;и гауссовская мутация"),
+        (320, 720, 360, 65, "Отсечение координат;элитизм и новое поколение"),
+        (370, 870, 260, 55, "Вывести результат;записать историю"),
+    ]
+    for x, y, width, height, text in boxes:
+        lines.append(f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="12" fill="#eaf2f8" stroke="#2874a6" stroke-width="2"/>')
+        for line_index, text_line in enumerate(text.split(";")):
+            lines.append(f'<text x="{x+width/2}" y="{y+25+line_index*20}" text-anchor="middle" font-size="16">{text_line}</text>')
+    arrows = [(500, 80, 500, 125), (500, 190, 500, 235), (500, 300, 500, 345),
+              (500, 410, 500, 500), (500, 565, 500, 610), (500, 675, 500, 720),
+              (500, 785, 500, 870)]
+    for x1, y1, x2, y2 in arrows:
+        lines.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#333" stroke-width="2" marker-end="url(#arrow)"/>')
+    lines.append('<text x="525" y="455" font-size="14">нет</text>')
+    lines.append('<path d="M320 377 H180 V267 H320" fill="none" stroke="#333" stroke-width="2" marker-end="url(#arrow)"/>')
+    lines.append('<text x="195" y="365" font-size="14">да</text>')
+    lines.append("</svg>")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def run_experiments(output_dir: Path, runs: int = 20) -> None:
     seeds = list(range(20260101, 20260101 + runs))
     configs = {
@@ -199,11 +277,14 @@ def run_experiments(output_dir: Path, runs: int = 20) -> None:
     write_csv(output_dir / "results.csv", summaries)
 
     trajectory: dict[str, list[float]] = {}
+    plot_points = 200
     for name, runs_history in histories.items():
-        length = min(len(history) for history in runs_history)
         trajectory[name] = [
-            statistics.mean(history[index] for history in runs_history[:runs])
-            for index in range(length)
+            statistics.mean(
+                history[round(index * (len(history) - 1) / (plot_points - 1))]
+                for history in runs_history[:runs]
+            )
+            for index in range(plot_points)
         ]
     write_csv(output_dir / "trajectory.csv", [
         {"step": index, **{name: f"{values[index]:.12g}" for name, values in trajectory.items()}}
@@ -211,6 +292,24 @@ def run_experiments(output_dir: Path, runs: int = 20) -> None:
         if all(index < len(values) for values in trajectory.values())
     ])
     write_svg(output_dir / "convergence.svg", trajectory, "Generation", "Best objective value")
+    statistics_by_method = {}
+    for method, configuration in (
+        ("ГА, pop=30", "population_30"),
+        ("ГА, pop=60", "population_60"),
+        ("Случайный поиск", "same_budget"),
+    ):
+        method_rows = [
+            float(row["best_value"]) for row in summaries
+            if row["configuration"] == configuration
+        ]
+        statistics_by_method[method] = {
+            "min": min(method_rows),
+            "mean": statistics.mean(method_rows),
+            "median": statistics.median(method_rows),
+            "max": max(method_rows),
+        }
+    write_statistics_svg(output_dir / "statistics.svg", statistics_by_method)
+    write_flowchart_svg(output_dir / "flowchart.svg")
 
 
 def main() -> None:
